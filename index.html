@@ -90,24 +90,31 @@
         <button class="tab-btn" id="cal-tab" onclick="switchTab('calendar-screen')">カレンダー</button>
         <button class="tab-btn" id="pw-change-tab" onclick="switchTab('pw-screen')">PW変更</button>
         <button class="tab-btn" id="admin-tab" onclick="switchTab('admin-screen')" style="display: none;">管理画面</button>
-        <button class="tab-btn" id="logout-tab" onclick="logout()" style="color:#e53e3e;">ログアウト</button>
+        <button class="tab-btn" id="logout-tab" onclick="logout()" style="color:#e53e3e;">解除</button>
     </div>
 
     <!-- 1. ログイン画面 -->
     <div id="login-screen" class="screen active">
         <div class="login-box">
-            <h2 style="text-align:center; border:none;">シフト管理ログイン</h2>
+            <h2 style="text-align:center; border:none;" id="login-title">シフト管理ログイン</h2>
+            
+            <!-- 通常時：スタッフ選択（初めて使うときだけ表示） -->
             <div class="form-group" id="normal-login-group">
                 <label>スタッフ名</label>
                 <select id="login-user-select"></select>
             </div>
-            <div class="form-group" id="remembered-group" style="display:none; text-align:center; padding:10px; background:#f0fff4; border-radius:8px;">
-                <span id="remembered-user-name" style="font-weight:bold; font-size:18px;"></span> さん
-                <div class="forget-link" onclick="clearRememberedUser()">👤 別のスタッフでログイン</div>
+            
+            <!-- 端末記憶時：名前を自動表示（2回目以降自動で切り替わる） -->
+            <div class="form-group" id="remembered-group" style="display:none; text-align:center; padding:12px; background:#f0fff4; border-radius:8px; border:1px solid #c6f6d5;">
+                <span style="font-size:13px; color:#4a5568; display:block; margin-bottom:2px;">ログイン中のスタッフ</span>
+                <span id="remembered-user-name" style="font-weight:bold; font-size:20px; color:#22543d;"></span> さん
+                <div class="forget-link" onclick="clearRememberedUser()">👤 別のスタッフに変更する</div>
             </div>
+            
             <div class="form-group">
                 <label>パスワード</label>
                 <input type="password" id="login-pass" placeholder="••••••••">
+                <span style="font-size:12px; color:#e53e3e; font-weight:bold; margin-top:4px; text-align:center;">※初期パスワード：shift1234</span>
             </div>
             <button class="btn" onclick="login()">ログイン</button>
             <div class="forget-link" style="color: #e53e3e; margin-top:20px;" onclick="forceResetSystem()">⚠️ 画面が動かない場合はここをタップ</div>
@@ -212,6 +219,7 @@
             <h3 style="margin-bottom:15px; color:var(--main-color);">💡 シフト提出ルール</h3>
             <ul style="padding-left:20px; font-size:14px; line-height:1.6; color:#4a5568;">
                 <li>公休の希望申請は<b>月に2回まで</b>です。</li>
+                <li>固定休み以外の希望公休は1日<b>2人まで</b>です。</li>
                 <li><b>公休の理由は入力必須</b>です（空欄不可）。</li>
                 <li><b>日曜日</b>は定休日（全員一斉に休み）です。</li>
                 <li><b>土曜日</b>の休み申請は、1人<b>月1回まで</b>です。</li>
@@ -336,16 +344,19 @@
     function openModal(id) { document.getElementById(id).style.display = 'flex'; }
     function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
+    // 💡 カイゼン：端末に一度記憶されたらスタッフ選択を非表示にする
     function checkRememberedUser() {
         const rUser = localStorage.getItem('rememberedUser');
         if (rUser && users[rUser]) {
             document.getElementById('normal-login-group').style.display = 'none';
             document.getElementById('remembered-group').style.display = 'block';
             document.getElementById('remembered-user-name').innerText = rUser;
+            document.getElementById('login-title').innerText = "スタッフ認証";
             document.getElementById('login-pass').focus();
         } else {
             document.getElementById('normal-login-group').style.display = 'block';
             document.getElementById('remembered-group').style.display = 'none';
+            document.getElementById('login-title').innerText = "シフト管理ログイン";
         }
     }
 
@@ -358,7 +369,7 @@
 
         if (users[selected] && users[selected].password === pass) {
             currentUser = selected;
-            localStorage.setItem('rememberedUser', currentUser);
+            localStorage.setItem('rememberedUser', currentUser); // 端末に名前を記憶
             document.getElementById('login-screen').classList.remove('active');
             document.getElementById('user-display').innerText = `👤 ${currentUser}`;
             document.getElementById('user-display').style.display = 'block';
@@ -402,6 +413,7 @@
 
     function logout() {
         currentUser = null;
+        // 注意: ログアウト時は端末記憶自体は残し、ログイン画面へ戻します
         document.getElementById('main-nav').style.display = 'none';
         document.getElementById('user-display').style.display = 'none';
         switchTab('login-screen'); checkRememberedUser();
@@ -472,9 +484,14 @@
             if (dayOfWeek === 0) {
                 cellContent += `<div class="sun-close-text">定休日</div>`;
             } else {
-                const count = dayVacations.length;
-                if(count > 0) { cellContent += `<div class="cal-count-badge has-vacation">公休: ${count}名</div>`; }
-                else { cellContent += `<div class="cal-count-badge">公休: 0名</div>`; }
+                const totalCount = dayVacations.length;
+                const wishCount = dayVacations.filter(v => !v.isFixed).length;
+                
+                if(totalCount > 0) { 
+                    cellContent += `<div class="cal-count-badge has-vacation">公休: ${totalCount}名<br>(希望: ${wishCount})</div>`; 
+                } else { 
+                    cellContent += `<div class="cal-count-badge">公休: 0名</div>`; 
+                }
                 
                 if (myVacation) { cellContent += `<div class="cal-my-status status-approved">確定</div>`; }
             }
@@ -611,7 +628,6 @@
         return dates;
     }
 
-    // 💡 カイゼン：ルール外の申請時に「管理者に相談してください」のポップアップを表示
     function submitVacationRange() {
         const reasonInput = document.getElementById('apply-reason').value;
         if (!reasonInput || reasonInput.trim() === "") { alert("公休の理由を入力してください。"); return; }
@@ -621,11 +637,20 @@
         const targetDates = getDatesInRange(rangeStartStr, endTarget);
         if(targetDates.length === 0) { alert("有効な日付がありません。"); return; }
 
-        // 連休ルールチェック：3日以上の連休申請は一発アウト
         if (targetDates.length >= 3) {
             alert("【申請エラー】\n3日以上の連休はシステムから申請できません。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。");
-            closeModal('reason-modal');
-            return;
+            closeModal('reason-modal'); return;
+        }
+
+        for (let d of targetDates) {
+            const existingAll = getDayVacationsAll(d.dateStr, d.dow, d.dateObj);
+            const currentWishCount = existingAll.filter(v => !v.isFixed).length;
+            
+            if (currentWishCount >= 2) {
+                const dateLabel = d.dateStr.replace(/(\d{4})-(\d{2})-(\d{2})/, "$2/$3");
+                alert(`【申請エラー】\n${dateLabel} は既に他のスタッフの希望公休が上限（2人）に達しています。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。`);
+                closeModal('reason-modal'); return;
+            }
         }
 
         const checkDate = new Date(rangeStartStr);
@@ -634,25 +659,20 @@
 
         let currentMonthVacations = vacations.filter(v => v.user === currentUser && v.date.startsWith(monthPrefix));
 
-        // 月の回数チェック：すでに申請枠がいっぱいの場合
         if (currentMonthVacations.length + targetDates.length > 2) {
             alert(`【申請エラー】\n希望公休は月に2回までです。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。`);
-            closeModal('reason-modal');
-            return;
+            closeModal('reason-modal'); return;
         }
 
-        // 土曜日ルールチェック
         const hasSatInRequest = targetDates.some(d => d.dow === 6);
         if (hasSatInRequest) {
             const currentSatCount = currentMonthVacations.filter(v => new Date(v.date).getDay() === 6).length;
             if (currentSatCount >= 1) {
                 alert("【申請エラー】\n土曜日の希望公休は月に1回までです。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。");
-                closeModal('reason-modal');
-                return;
+                closeModal('reason-modal'); return;
             }
         }
 
-        // ルールに合格した場合のみ登録処理
         targetDates.forEach(d => {
             if(!vacations.some(v => v.user === currentUser && v.date === d.dateStr)) {
                 vacations.push({ id: Date.now() + Math.random(), user: currentUser, date: d.dateStr, reason: reason, status: "approved" });
