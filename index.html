@@ -75,11 +75,22 @@
         .kana-btn.active { background: var(--main-color); color: white; }
 
         .fixed-list-item { display: flex; justify-content: space-between; align-items: center; background: white; padding: 6px 10px; border-radius: 6px; margin-bottom: 4px; border: 1px solid #e2e8f0; font-size: 12px; }
+        
+        /* ローディングインジケータ */
+        .loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.85); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; }
+        .spinner { border: 4px solid rgba(0,0,0,0.1); width: 36px; height: 36px; border-radius: 50%; border-left-color: var(--main-color); animation: spin 1s linear infinite; margin-bottom: 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
 
 <div class="phone-wrapper">
+    <!-- ローディング表示 -->
+    <div id="loading-screen" class="loading-overlay">
+        <div class="spinner"></div>
+        <p id="loading-text" style="font-weight: bold; color: #4a5568; font-size: 14px;">システムを接続しています...</p>
+    </div>
+
     <header>
         <strong>⏰ TIME CARD</strong>
         <button class="btn" id="rule-btn" style="padding:4px 8px; font-size:12px; width:auto; margin:0; background:rgba(255,255,255,0.2);" onclick="openModal('rule-modal')">💡 ルール</button>
@@ -242,7 +253,31 @@
     </div>
 </div>
 
-<script>
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // 稲澤さん専用のFirebase設定
+    const firebaseConfig = {
+        apiKey: "AIzaSyBQc677TCwkqmkVJrERdJglisyB9WkXkcs",
+        authDomain: "biz-shift-e58e9.firebaseapp.com",
+        projectId: "biz-shift-e58e9",
+        storageBucket: "biz-shift-e58e9.firebasestorage.app",
+        messagingSenderId: "68549763333",
+        appId: "1:68549763333:web:4fff6539bac9656919d76c"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const appId = "biz-shift-e58e9";
+    const pathUsers = `artifacts/${appId}/public/data/users`;
+    const pathVacations = `artifacts/${appId}/public/data/vacations`;
+    const pathFixed = `artifacts/${appId}/public/data/fixedSchedules`;
+    const pathExceptions = `artifacts/${appId}/public/data/fixedExceptions`;
+
     const staffList = ["稲澤","中西","鍋嶋","十河","邓","濱田","久米","大塚","フランス","在末","松隈","木村","糸目","越智","宇川","細川","漆原","坂口","平田","土居","大松","アレン"];
     const kanaMap = {
         'あ':['ア','い','う','え','お','在','宇'], 'か':['久','木'], 'さ':['坂'], 'た':['十','土','邓'],
@@ -254,112 +289,91 @@
 
     let users = {};
     let vacations = [];
-    let currentUser = null;
     let fixedSchedules = [];
-    let fixedExceptions = []; 
-
+    let fixedExceptions = [];
+    let currentUser = null;
     let currentYear = 2026;
     let currentMonth = 6; 
-    
     let rangeStartStr = "";
     let rangeEndStr = "";
+    
+    // 強制的にローディングを解除する安全装置（iPhone対応）
+    let isDataLoaded = false;
+    let isSubscribed = false;
+    setTimeout(() => {
+        if(!isDataLoaded) {
+            hideLoading();
+            if(!isSubscribed) subscribeToCloudData(); // フォールバックで強制的に接続開始
+        }
+    }, 4000); // 4秒経ったら強制解除
 
-    function initStorage() {
+    async function initAuth() {
         try {
-            const storedUsers = localStorage.getItem('biz_users');
-            if (storedUsers && storedUsers !== "{}") { users = JSON.parse(storedUsers); } else { forceResetUsersData(); }
-        } catch(e) { forceResetUsersData(); }
-        
-        const storedVacations = localStorage.getItem('biz_vacations');
-        if (storedVacations) { vacations = JSON.parse(storedVacations); }
-
-        const storedFixed = localStorage.getItem('biz_fixed_schedules_v3');
-        if (storedFixed) { 
-            fixedSchedules = JSON.parse(storedFixed); 
-        } else {
-            fixedSchedules = [
-                { id: 1, user: "越智", week: "all", dow: 2 },
-                { id: 2, user: "鍋嶋", week: "all", dow: 3 },
-                { id: 3, user: "大松", week: "all", dow: 3 },
-                { id: 4, user: "中西", week: "all", dow: 3 },
-                { id: 5, user: "在末", week: "all", dow: 4 },
-                { id: 6, user: "土居", week: "all", dow: 5 },
-                { id: 7, user: "稲澤", week: "all", dow: 6 },
-                { id: 8, user: "平田", week: "all", dow: 6 },
-                { id: 9, user: "鍋嶋(午後休)", week: "all", dow: 6 }
-            ];
-            localStorage.setItem('biz_fixed_schedules_v3', JSON.stringify(fixedSchedules));
-        }
-
-        const storedExceptions = localStorage.getItem('biz_fixed_exceptions');
-        if (storedExceptions) { fixedExceptions = JSON.parse(storedExceptions); }
-    }
-
-    function forceResetUsersData() {
-        users = {};
-        staffList.forEach(name => { users[name] = { password: "shift1234", isAdmin: (name === "稲澤") }; });
-        localStorage.setItem('biz_users', JSON.stringify(users));
-    }
-
-    function forceResetSystem() {
-        if(confirm("システムデータを完全に初期化しますか？")) {
-            localStorage.removeItem('biz_users');
-            localStorage.removeItem('rememberedUser');
-            localStorage.removeItem('biz_fixed_schedules_v3');
-            localStorage.removeItem('biz_fixed_exceptions');
-            fixedExceptions = [];
-            forceResetUsersData(); initStorage(); buildUserLists(); checkRememberedUser();
-            alert("初期化が完了しました。");
+            await signInAnonymously(auth);
+        } catch (e) {
+            console.error("Authエラー:", e);
+            if(!isSubscribed) subscribeToCloudData();
         }
     }
 
-    function saveUsers() { localStorage.setItem('biz_users', JSON.stringify(users)); }
-    function saveVacations() { localStorage.setItem('biz_vacations', JSON.stringify(vacations)); }
-    function saveFixedSchedules() { localStorage.setItem('biz_fixed_schedules_v3', JSON.stringify(fixedSchedules)); }
-    function saveExceptions() { localStorage.setItem('biz_fixed_exceptions', JSON.stringify(fixedExceptions)); }
+    onAuthStateChanged(auth, (user) => {
+        if (user && !isSubscribed) subscribeToCloudData();
+    });
 
-    function buildUserLists() {
-        const select = document.getElementById('login-user-select');
-        const adminTarget = document.getElementById('admin-target-user');
-        const adminFixedUser = document.getElementById('admin-fixed-user');
+    initAuth();
+
+    function subscribeToCloudData() {
+        isSubscribed = true;
         
-        if (select) { select.innerHTML = ''; staffList.forEach(name => { select.add(new Option(name, name)); }); }
-        if (adminTarget) { adminTarget.innerHTML = ''; staffList.forEach(name => { adminTarget.add(new Option(name, name)); }); }
-        if (adminFixedUser) { adminFixedUser.innerHTML = ''; staffList.forEach(name => { adminFixedUser.add(new Option(name, name)); }); }
-        
-        const monthSelect = document.getElementById('admin-view-month');
-        if(monthSelect) {
-            monthSelect.innerHTML = '';
-            for(let i = 1; i <= 6; i++) {
-                let d = new Date(baseYear, baseMonth + i, 1);
-                let y = d.getFullYear(); let m = d.getMonth();
-                monthSelect.add(new Option(`${y}年${m+1}月`, `${y}-${m}`));
+        onSnapshot(collection(db, pathUsers), (s) => {
+            if(s.empty) {
+                staffList.forEach(n => setDoc(doc(db, pathUsers, n), { password: "shift1234", isAdmin: (n === "稲澤") }));
+            } else {
+                s.forEach(d => users[d.id] = d.data());
+                checkRememberedUser();
             }
-            monthSelect.value = `2026-6`;
+            hideLoading();
+        });
+
+        onSnapshot(collection(db, pathVacations), (s) => {
+            vacations = []; s.forEach(d => vacations.push({id: d.id, ...d.data()}));
+            renderCalendar(); renderAdminPage(); hideLoading();
+        });
+
+        onSnapshot(collection(db, pathFixed), (s) => {
+            if (s.empty) {
+                const initialFixed = [
+                    { user: "越智", week: "all", dow: 2 }, { user: "鍋嶋", week: "all", dow: 3 },
+                    { user: "大松", week: "all", dow: 3 }, { user: "中西", week: "all", dow: 3 },
+                    { user: "在末", week: "all", dow: 4 }, { user: "土居", week: "all", dow: 5 },
+                    { user: "稲澤", week: "all", dow: 6 }, { user: "平田", week: "all", dow: 6 },
+                    { user: "鍋嶋(午後休)", week: "all", dow: 6 }
+                ];
+                initialFixed.forEach(f => addDoc(collection(db, pathFixed), f));
+            } else {
+                fixedSchedules = []; s.forEach(d => fixedSchedules.push({id: d.id, ...d.data()}));
+                renderCalendar(); renderAdminPage();
+            }
+            hideLoading();
+        });
+
+        onSnapshot(collection(db, pathExceptions), (s) => {
+            fixedExceptions = []; s.forEach(d => fixedExceptions.push({id: d.id, ...d.data()}));
+            renderCalendar(); hideLoading();
+        });
+    }
+
+    function hideLoading() {
+        isDataLoaded = true;
+        const loader = document.getElementById('loading-screen');
+        if(loader) loader.style.display = 'none';
+        const nav = document.getElementById('main-nav');
+        if(nav && currentUser && users[currentUser] && users[currentUser].password !== "shift1234") {
+            nav.style.display = 'flex';
         }
     }
 
-    function openModal(id) { document.getElementById(id).style.display = 'flex'; }
-    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-
-    function checkRememberedUser() {
-        const rUser = localStorage.getItem('rememberedUser');
-        if (rUser && users[rUser]) {
-            document.getElementById('normal-login-group').style.display = 'none';
-            document.getElementById('remembered-group').style.display = 'block';
-            document.getElementById('remembered-user-name').innerText = rUser;
-            document.getElementById('login-title').innerText = "スタッフ認証";
-            document.getElementById('login-pass').focus();
-        } else {
-            document.getElementById('normal-login-group').style.display = 'block';
-            document.getElementById('remembered-group').style.display = 'none';
-            document.getElementById('login-title').innerText = "シフト管理ログイン";
-        }
-    }
-
-    function clearRememberedUser() { localStorage.removeItem('rememberedUser'); checkRememberedUser(); }
-
-    function login() {
+    window.login = function() {
         let selected = document.getElementById('remembered-group').style.display === 'block' ? localStorage.getItem('rememberedUser') : document.getElementById('login-user-select').value;
         const pass = document.getElementById('login-pass').value;
         if(!selected) { alert('スタッフ名が選択されていません。'); return; }
@@ -391,7 +405,7 @@
         } else { alert('パスワードが正しくありません。'); }
     }
 
-    function changePassword() {
+    window.changePassword = function() {
         const currentPw = document.getElementById('current-pw').value;
         const newPw = document.getElementById('new-pw').value;
         const newPwConfirm = document.getElementById('new-pw-confirm').value;
@@ -400,22 +414,67 @@
         if (!newPw || newPw === "shift1234") { alert("有効な新しいパスワードを入力してください。"); return; }
         if (newPw !== newPwConfirm) { alert("新しいパスワード（確認）が一致しません。"); return; }
 
-        users[currentUser].password = newPw; saveUsers();
-        alert("パスワードを変更しました！");
-        document.getElementById('cal-tab').disabled = false;
-        document.getElementById('rule-btn').style.display = 'block';
-        document.getElementById('admin-tab').style.display = users[currentUser].isAdmin ? 'block' : 'none';
-        switchTab('calendar-screen');
+        updateDoc(doc(db, pathUsers, currentUser), { password: newPw }).then(() => {
+            alert("パスワードを変更しました！");
+            document.getElementById('cal-tab').disabled = false;
+            document.getElementById('rule-btn').style.display = 'block';
+            document.getElementById('admin-tab').style.display = users[currentUser].isAdmin ? 'block' : 'none';
+            switchTab('calendar-screen');
+        });
     }
 
-    function logout() {
+    window.logout = function() {
         currentUser = null;
         document.getElementById('main-nav').style.display = 'none';
         document.getElementById('user-display').style.display = 'none';
         switchTab('login-screen'); checkRememberedUser();
     }
 
-    function switchTab(screenId) {
+    window.forceResetSystem = function() {
+        alert("システム管理者にご相談ください。");
+    }
+
+    window.clearRememberedUser = function() {
+        localStorage.removeItem('rememberedUser'); checkRememberedUser();
+    }
+
+    function checkRememberedUser() {
+        const rUser = localStorage.getItem('rememberedUser');
+        if (rUser && users[rUser]) {
+            document.getElementById('normal-login-group').style.display = 'none';
+            document.getElementById('remembered-group').style.display = 'block';
+            document.getElementById('remembered-user-name').innerText = rUser;
+            document.getElementById('login-title').innerText = "スタッフ認証";
+            document.getElementById('login-pass').focus();
+        } else {
+            document.getElementById('normal-login-group').style.display = 'block';
+            document.getElementById('remembered-group').style.display = 'none';
+            document.getElementById('login-title').innerText = "シフト管理ログイン";
+        }
+    }
+
+    function buildUserLists() {
+        const select = document.getElementById('login-user-select');
+        const adminTarget = document.getElementById('admin-target-user');
+        const adminFixedUser = document.getElementById('admin-fixed-user');
+        
+        if (select) { select.innerHTML = ''; staffList.forEach(name => { select.add(new Option(name, name)); }); }
+        if (adminTarget) { adminTarget.innerHTML = ''; staffList.forEach(name => { adminTarget.add(new Option(name, name)); }); }
+        if (adminFixedUser) { adminFixedUser.innerHTML = ''; staffList.forEach(name => { adminFixedUser.add(new Option(name, name)); }); }
+        
+        const monthSelect = document.getElementById('admin-view-month');
+        if(monthSelect) {
+            monthSelect.innerHTML = '';
+            for(let i = 1; i <= 6; i++) {
+                let d = new Date(baseYear, baseMonth + i, 1);
+                let y = d.getFullYear(); let m = d.getMonth();
+                monthSelect.add(new Option(`${y}年${m+1}月`, `${y}-${m}`));
+            }
+            monthSelect.value = `2026-6`;
+        }
+    }
+
+    window.switchTab = function(screenId) {
         document.querySelectorAll('.screen').forEach(s => s.style.display = 'none');
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         const targetScreen = document.getElementById(screenId);
@@ -429,9 +488,187 @@
         if (screenId === 'admin-screen') renderAdminPage();
     }
 
+    window.changeMonth = function(val) {
+        currentMonth += val;
+        if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+        if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+        renderCalendar();
+    }
+
+    function resetRangeSelection() { rangeStartStr = ""; rangeEndStr = ""; }
+
+    window.handleCellClick = function(dateStr, dayOfWeek) {
+        if (dayOfWeek === 0) { resetRangeSelection(); renderCalendar(); return; }
+        if (!rangeStartStr || (rangeStartStr && rangeEndStr)) {
+            rangeStartStr = dateStr; rangeEndStr = "";
+        } else if (rangeStartStr && !rangeEndStr) {
+            if (dateStr < rangeStartStr) { rangeStartStr = dateStr; } else { rangeEndStr = dateStr; }
+        }
+        renderCalendar();
+    }
+
+    window.removeFixedFromCalendar = function(schedId, userName, reasonText, dateStr) {
+        if(confirm(`【確認】選択した箇所だけ消去します。\n${userName} さんの ${dateStr} の固定公休を解除（この日は出勤に変更）しますか？`)) {
+            addDoc(collection(db, pathExceptions), { date: dateStr, user: userName }).then(() => {
+                alert(`${dateStr} の固定休みを解除しました。`);
+            });
+        }
+    }
+
+    window.removeVacationFromCalendar = function(id, userName, dateStr) {
+        if(confirm(`【確認】カレンダーから直接操作しています。\n${userName} さんの ${dateStr} の希望公休を削除しますか？`)) {
+            deleteDoc(doc(db, pathVacations, id)).then(() => {
+                alert("希望公休を削除しました。");
+            });
+        }
+    }
+
+    window.cancelVacation = function(dateStr) {
+        const item = vacations.find(v => v.date === dateStr && v.user === currentUser);
+        if (item) {
+            deleteDoc(doc(db, pathVacations, item.id)).then(() => {
+                resetRangeSelection();
+                alert("希望公休登録を消去しました。");
+            });
+        }
+    }
+
+    window.openApplyModal = function() {
+        document.getElementById('apply-reason').value = ""; openModal('reason-modal');
+    }
+    
+    window.openModal = function(id) { document.getElementById(id).style.display = 'flex'; }
+    window.closeModal = function(id) { document.getElementById(id).style.display = 'none'; }
+
+    function getDatesInRange(startStr, endStr) {
+        const dates = []; let curr = new Date(startStr); const end = new Date(endStr);
+        while (curr <= end) {
+            let dStr = curr.toISOString().split('T')[0];
+            if (curr.getDay() !== 0) { dates.push({ dateStr: dStr, dow: curr.getDay(), dateObj: new Date(curr) }); }
+            curr.setDate(curr.getDate() + 1);
+        }
+        return dates;
+    }
+
+    window.submitVacationRange = function() {
+        const reasonInput = document.getElementById('apply-reason').value;
+        if (!reasonInput || reasonInput.trim() === "") { alert("公休の理由を入力してください。"); return; }
+        const reason = reasonInput.trim();
+
+        const endTarget = rangeEndStr ? rangeEndStr : rangeStartStr;
+        const targetDates = getDatesInRange(rangeStartStr, endTarget);
+        if(targetDates.length === 0) { alert("有効な日付がありません。"); return; }
+
+        if (targetDates.length >= 3) {
+            alert("【申請エラー】\n3日以上の連休はシステムから申請できません。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。");
+            closeModal('reason-modal'); return;
+        }
+
+        for (let d of targetDates) {
+            const existingAll = getDayVacationsAll(d.dateStr, d.dow, d.dateObj);
+            const currentWishCount = existingAll.filter(v => !v.isFixed).length;
+            
+            if (currentWishCount >= 2) {
+                const dateLabel = d.dateStr.replace(/(\d{4})-(\d{2})-(\d{2})/, "$2/$3");
+                alert(`【申請エラー】\n${dateLabel} は既に他のスタッフの希望公休が上限（2人）に達しています。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。`);
+                closeModal('reason-modal'); return;
+            }
+        }
+
+        const checkDate = new Date(rangeStartStr);
+        const year = checkDate.getFullYear(); const month = checkDate.getMonth() + 1;
+        const monthPrefix = `${year}-${String(month).padStart(2,'0')}`;
+
+        let currentMonthVacations = vacations.filter(v => v.user === currentUser && v.date.startsWith(monthPrefix));
+
+        if (currentMonthVacations.length + targetDates.length > 2) {
+            alert(`【申請エラー】\n希望公休は月に2回までです。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。`);
+            closeModal('reason-modal'); return;
+        }
+
+        const hasSatInRequest = targetDates.some(d => d.dow === 6);
+        if (hasSatInRequest) {
+            const currentSatCount = currentMonthVacations.filter(v => new Date(v.date).getDay() === 6).length;
+            if (currentSatCount >= 1) {
+                alert("【申請エラー】\n土曜日の希望公休は月に1回までです。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。");
+                closeModal('reason-modal'); return;
+            }
+        }
+
+        let addedCount = 0;
+        targetDates.forEach(d => {
+            if(!vacations.some(v => v.user === currentUser && v.date === d.dateStr)) {
+                addDoc(collection(db, pathVacations), {
+                    user: currentUser,
+                    date: d.dateStr,
+                    reason: reason,
+                    status: "approved"
+                }).then(() => {
+                    addedCount++;
+                    if (addedCount === targetDates.length) {
+                        closeModal('reason-modal');
+                        resetRangeSelection();
+                        alert("公休を登録しました。");
+                    }
+                });
+            }
+        });
+    }
+
+    window.addFixedSchedule = function() {
+        const user = document.getElementById('admin-fixed-user').value;
+        const week = document.getElementById('admin-fixed-week').value;
+        const dow = document.getElementById('admin-fixed-dow').value;
+        if(!user) return;
+
+        const isDuplicate = fixedSchedules.some(s => s.user === user && s.week === week && parseInt(s.dow) === parseInt(dow));
+        if(isDuplicate) { alert("既に同じ条件で登録されています。"); return; }
+
+        addDoc(collection(db, pathFixed), { user: user, week: week, dow: parseInt(dow) }).then(() => {
+            alert(`${user}さんの固定休みスケジュールを追加しました！`);
+        });
+    }
+
+    window.deleteFixedSchedule = function(id) {
+        if(confirm("この固定休みルール（全体）を削除してもよろしいですか？")) {
+            deleteDoc(doc(db, pathFixed, id)).then(() => { alert("固定公休ルールを削除しました。"); });
+        }
+    }
+
+    window.adminDeleteVacation = function(id) {
+        if(confirm("この公休データを削除してもよろしいですか？")) {
+            deleteDoc(doc(db, pathVacations, id)).then(() => { alert("公休データを削除しました。"); });
+        }
+    }
+
+    window.adminForceRegister = function() {
+        const user = document.getElementById('admin-target-user').value;
+        const date = document.getElementById('admin-target-date').value;
+        const reasonInput = document.getElementById('admin-target-reason').value;
+        
+        if(!reasonInput || reasonInput.trim() === "") { alert("管理代理登録でも理由は必須です。"); return; }
+        if(!date) { alert("日付を選択してください"); return; }
+        
+        addDoc(collection(db, pathVacations), {
+            user: user,
+            date: date,
+            reason: reasonInput.trim(),
+            status: "approved"
+        }).then(() => {
+            alert(`${user}さんの休みを強制登録しました。`);
+        });
+    }
+
+    window.resetPassword = function() {
+        const user = document.getElementById('admin-reset-user').value;
+        if(!user) { alert("スタッフを選択してください"); return; }
+        updateDoc(doc(db, pathUsers, user), { password: "shift1234" }).then(() => {
+            alert(`${user}さんのパスワードを初期化しました。`);
+        });
+    }
+
     function getNthWeekOfMonth(dateObj) {
-        const date = dateObj.getDate();
-        return Math.ceil(date / 7);
+        return Math.ceil(dateObj.getDate() / 7);
     }
 
     function getDayVacationsAll(dateStr, dayOfWeek, dateObj) {
@@ -456,6 +693,7 @@
 
     function renderCalendar() {
         const grid = document.getElementById('calendar-grid');
+        if (!grid) return;
         grid.innerHTML = '<div class="cal-day-head">日</div><div class="cal-day-head">月</div><div class="cal-day-head">火</div><div class="cal-day-head">水</div><div class="cal-day-head">木</div><div class="cal-day-head">金</div><div class="cal-day-head">土</div>';
         document.getElementById('cal-month-title').innerText = `${currentYear}年${currentMonth + 1}月`;
 
@@ -502,45 +740,11 @@
         updateActionPanel();
     }
 
-    function changeMonth(val) {
-        currentMonth += val;
-        if (currentMonth > 11) { currentMonth = 0; currentYear++; }
-        if (currentMonth < 0) { currentMonth = 11; currentYear--; }
-        renderCalendar();
-    }
-
-    function resetRangeSelection() { rangeStartStr = ""; rangeEndStr = ""; }
-
-    function handleCellClick(dateStr, dayOfWeek) {
-        if (dayOfWeek === 0) { resetRangeSelection(); renderCalendar(); return; }
-        if (!rangeStartStr || (rangeStartStr && rangeEndStr)) {
-            rangeStartStr = dateStr; rangeEndStr = "";
-        } else if (rangeStartStr && !rangeEndStr) {
-            if (dateStr < rangeStartStr) { rangeStartStr = dateStr; } else { rangeEndStr = dateStr; }
-        }
-        renderCalendar();
-    }
-
-    function removeFixedFromCalendar(schedId, userName, reasonText, dateStr) {
-        if(confirm(`【確認】選択した箇所だけ消去します。\n${userName} さんの ${dateStr} の固定公休を解除（この日は出勤に変更）しますか？\n※他の週の固定休みは消えません。`)) {
-            fixedExceptions.push({ date: dateStr, user: userName });
-            saveExceptions();
-            renderCalendar();
-            alert(`${dateStr} の固定休みを解除しました。`);
-        }
-    }
-
-    function removeVacationFromCalendar(id, userName, dateStr) {
-        if(confirm(`【確認】カレンダーから直接操作しています。\n${userName} さんの ${dateStr} の希望公休を削除しますか？`)) {
-            vacations = vacations.filter(v => v.id !== id); saveVacations(); renderCalendar();
-            alert("希望公休を削除しました。");
-        }
-    }
-
     function updateActionPanel() {
         const listEl = document.getElementById('panel-staff-list');
         const btnArea = document.getElementById('panel-buttons');
         const labelEl = document.getElementById('panel-date-label');
+        if(!listEl || !btnArea || !labelEl) return;
         btnArea.innerHTML = "";
 
         if (!rangeStartStr) {
@@ -557,7 +761,7 @@
         const isEditablePeriod = (diffMonths >= 2 && diffMonths <= 6);
         const dayVacations = getDayVacationsAll(rangeStartStr, dayOfWeek, targetDate);
         const myVacation = dayVacations.find(v => v.user === currentUser || (v.isFixed && v.user.startsWith(currentUser)));
-        const isAdminUser = users[currentUser].isAdmin;
+        const isAdminUser = currentUser && users[currentUser] && users[currentUser].isAdmin;
 
         if (!rangeEndStr) {
             labelEl.innerText = `${dispStart} の公休詳細`;
@@ -571,9 +775,9 @@
                     
                     if (isAdminUser) {
                         if (v.isFixed) {
-                            txt += `<button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0;" onclick="removeFixedFromCalendar(${v.id}, '${v.user}', '${v.reason}', '${rangeStartStr}')">解除</button>`;
+                            txt += `<button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0;" onclick="removeFixedFromCalendar('${v.id}', '${v.user}', '${v.reason}', '${rangeStartStr}')">解除</button>`;
                         } else {
-                            txt += `<button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0; background:#dd6b20;" onclick="removeVacationFromCalendar(${v.id}, '${v.user}', '${rangeStartStr}')">削除</button>`;
+                            txt += `<button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0; background:#dd6b20;" onclick="removeVacationFromCalendar('${v.id}', '${v.user}', '${rangeStartStr}')">削除</button>`;
                         }
                     }
                     txt += `</div>`;
@@ -612,102 +816,6 @@
         }
     }
 
-    function openApplyModal() { document.getElementById('apply-reason').value = ""; openModal('reason-modal'); }
-
-    function getDatesInRange(startStr, endStr) {
-        const dates = []; let curr = new Date(startStr); const end = new Date(endStr);
-        while (curr <= end) {
-            let dStr = curr.toISOString().split('T')[0];
-            if (curr.getDay() !== 0) { dates.push({ dateStr: dStr, dow: curr.getDay(), dateObj: new Date(curr) }); }
-            curr.setDate(curr.getDate() + 1);
-        }
-        return dates;
-    }
-
-    function submitVacationRange() {
-        const reasonInput = document.getElementById('apply-reason').value;
-        if (!reasonInput || reasonInput.trim() === "") { alert("公休の理由を入力してください。"); return; }
-        const reason = reasonInput.trim();
-
-        const endTarget = rangeEndStr ? rangeEndStr : rangeStartStr;
-        const targetDates = getDatesInRange(rangeStartStr, endTarget);
-        if(targetDates.length === 0) { alert("有効な日付がありません。"); return; }
-
-        if (targetDates.length >= 3) {
-            alert("【申請エラー】\n3日以上の連休はシステムから申請できません。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。");
-            closeModal('reason-modal'); return;
-        }
-
-        for (let d of targetDates) {
-            const existingAll = getDayVacationsAll(d.dateStr, d.dow, d.dateObj);
-            const currentWishCount = existingAll.filter(v => !v.isFixed).length;
-            
-            if (currentWishCount >= 2) {
-                const dateLabel = d.dateStr.replace(/(\d{4})-(\d{2})-(\d{2})/, "$2/$3");
-                alert(`【申請エラー】\n${dateLabel} は既に他のスタッフの希望公休が上限（2人）に達しています。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。`);
-                closeModal('reason-modal'); return;
-            }
-        }
-
-        const checkDate = new Date(rangeStartStr);
-        const year = checkDate.getFullYear(); const month = checkDate.getMonth() + 1;
-        const monthPrefix = `${year}-${String(month).padStart(2,'0')}`;
-
-        let currentMonthVacations = vacations.filter(v => v.user === currentUser && v.date.startsWith(monthPrefix));
-
-        if (currentMonthVacations.length + targetDates.length > 2) {
-            alert(`【申請エラー】\n希望公休は月に2回までです。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。`);
-            closeModal('reason-modal'); return;
-        }
-
-        const hasSatInRequest = targetDates.some(d => d.dow === 6);
-        if (hasSatInRequest) {
-            const currentSatCount = currentMonthVacations.filter(v => new Date(v.date).getDay() === 6).length;
-            if (currentSatCount >= 1) {
-                alert("【申請エラー】\n土曜日の希望公休は月に1回までです。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。");
-                closeModal('reason-modal'); return;
-            }
-        }
-
-        targetDates.forEach(d => {
-            if(!vacations.some(v => v.user === currentUser && v.date === d.dateStr)) {
-                vacations.push({ id: Date.now() + Math.random(), user: currentUser, date: d.dateStr, reason: reason, status: "approved" });
-            }
-        });
-
-        saveVacations(); closeModal('reason-modal'); resetRangeSelection(); renderCalendar();
-        alert("公休を登録しました。");
-    }
-
-    function cancelVacation(dateStr) {
-        vacations = vacations.filter(v => !(v.date === dateStr && v.user === currentUser));
-        saveVacations(); resetRangeSelection(); renderCalendar();
-        alert("公休登録を消去しました。");
-    }
-
-    function addFixedSchedule() {
-        const user = document.getElementById('admin-fixed-user').value;
-        const week = document.getElementById('admin-fixed-week').value;
-        const dow = document.getElementById('admin-fixed-dow').value;
-        if(!user) return;
-
-        const isDuplicate = fixedSchedules.some(s => s.user === user && s.week === week && parseInt(s.dow) === parseInt(dow));
-        if(isDuplicate) { alert("既に同じ条件で登録されています。"); return; }
-
-        fixedSchedules.push({ id: Date.now(), user: user, week: week, dow: parseInt(dow) });
-        saveFixedSchedules();
-        renderAdminPage(); renderCalendar();
-        alert(`${user}さんの固定休みスケジュールを追加しました！`);
-    }
-
-    function deleteFixedSchedule(id) {
-        if(confirm("この固定休みルール（全体）を削除してもよろしいですか？\n※すべての週からこの固定休みが消去されます。")) {
-            fixedSchedules = fixedSchedules.filter(s => s.id !== id);
-            saveFixedSchedules();
-            renderAdminPage(); renderCalendar();
-        }
-    }
-
     function renderFixedScheduleList() {
         const container = document.getElementById('admin-fixed-list');
         if(!container) return;
@@ -724,18 +832,20 @@
             container.innerHTML += `
                 <div class="fixed-list-item">
                     <span><b>[${s.user}]</b> ─ ${weekText}(${dows[s.dow]})曜固定休</span>
-                    <button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0;" onclick="deleteFixedSchedule(${s.id})">ルール削除</button>
+                    <button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0;" onclick="deleteFixedSchedule('${s.id}')">ルール削除</button>
                 </div>
             `;
         });
     }
 
-    function renderAdminPage() {
+    window.renderAdminPage = function() {
         renderFixedScheduleList();
         
         const listContainer = document.getElementById('admin-vacation-list');
-        const monthVal = document.getElementById('admin-view-month').value;
-        if(!listContainer || !monthVal) return;
+        const monthSelect = document.getElementById('admin-view-month');
+        if(!listContainer || !monthSelect) return;
+        const monthVal = monthSelect.value;
+        if(!monthVal) return;
 
         const [y, m] = monthVal.split('-');
         const prefix = `${y}-${String(parseInt(m)+1).padStart(2,'0')}`;
@@ -752,38 +862,12 @@
                         <b>${v.date.substring(5)} [${v.user}]</b> <br>
                         <span style="font-size:11px; color:#718096;">理由: ${v.reason}</span>
                     </div>
-                    <button class="btn btn-danger" style="padding:4px 8px; font-size:11px; width:auto; margin:0;" onclick="adminDeleteVacation(${v.id})">削除</button>
+                    <button class="btn btn-danger" style="padding:4px 8px; font-size:11px; width:auto; margin:0;" onclick="adminDeleteVacation('${v.id}')">削除</button>
                 </div>`;
         });
     }
 
-    function adminDeleteVacation(id) {
-        if(confirm("この公休データを削除してもよろしいですか？")) {
-            vacations = vacations.filter(v => v.id !== id); saveVacations(); renderAdminPage();
-        }
-    }
-
-    function adminForceRegister() {
-        const user = document.getElementById('admin-target-user').value;
-        const date = document.getElementById('admin-target-date').value;
-        const reasonInput = document.getElementById('admin-target-reason').value;
-        
-        if(!reasonInput || reasonInput.trim() === "") { alert("管理代理登録でも理由は必須です。"); return; }
-        if(!date) { alert("日付を選択してください"); return; }
-        
-        vacations.push({ id: Date.now(), user: user, date: date, reason: reasonInput.trim(), status: "approved" });
-        saveVacations(); alert(`${user}さんの休みを強制登録しました。`); renderAdminPage();
-    }
-
-    function initAdminKanaFilter() {
-        const container = document.getElementById('kana-filter-container');
-        if(!container) return;
-        container.innerHTML = '<button class="kana-btn active" onclick="filterAdminUser(\'すべて\')">すべて</button>';
-        Object.keys(kanaMap).forEach(key => { container.innerHTML += `<button class="kana-btn" onclick="filterAdminUser('${key}')">${key}</button>`; });
-        filterAdminUser('すべて');
-    }
-
-    function filterAdminUser(kana) {
+    window.filterAdminUser = function(kana) {
         document.querySelectorAll('.kana-btn').forEach(b => b.classList.remove('active'));
         if(event && event.target && event.target.classList) event.target.classList.add('active');
         const select = document.getElementById('admin-reset-user');
@@ -794,15 +878,17 @@
         });
     }
 
-    function resetPassword() {
-        const user = document.getElementById('admin-reset-user').value;
-        if(!user) { alert("スタッフを選択してください"); return; }
-        users[user].password = "shift1234"; saveUsers(); alert(`${user}さんのパスワードを初期化しました。`);
+    function initAdminKanaFilter() {
+        const container = document.getElementById('kana-filter-container');
+        if(!container) return;
+        container.innerHTML = '<button class="kana-btn active" onclick="filterAdminUser(\'すべて\')">すべて</button>';
+        Object.keys(kanaMap).forEach(key => { container.innerHTML += `<button class="kana-btn" onclick="filterAdminUser('${key}')">${key}</button>`; });
+        filterAdminUser('すべて');
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
-        initStorage(); buildUserLists(); checkRememberedUser(); initAdminKanaFilter();
-    });
+    // スクリプト読み込み時にリスト等を構築
+    buildUserLists();
+    initAdminKanaFilter();
 </script>
 </body>
 </html>
