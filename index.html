@@ -38,11 +38,11 @@
         .cal-day-head { background: #2b6cb0; color: white; text-align: center; padding: 6px 0; font-size: 11px; font-weight: bold; border-right: 1px solid #ccc; }
         .cal-day-head:nth-child(1) { background: #e53e3e; }
         .cal-day-head:nth-child(7) { background: #3182ce; }
+        
+        /* カレンダーセルのデザイン */
         .cal-cell { height: 75px; background: white; border-right: 1px solid #ccc; border-bottom: 1px solid #ccc; padding: 3px; font-size: 10px; display: flex; flex-direction: column; position: relative; cursor: pointer; overflow: hidden; }
         .cal-cell.other-month { background: #f0f0f0; color: #cbd5e0; pointer-events: none; }
-        .cal-cell.selected-start { background: #eefaf0; border: 2px solid var(--main-color); padding: 1px; }
-        .cal-cell.selected-range { background: #f0fff4; }
-        .cal-cell.selected-end { background: #eefaf0; border: 2px solid #2b6cb0; padding: 1px; }
+        .cal-cell.selected-start { background: #eefaf0; border: 2.5px solid var(--sub-color); padding: 1.5px; }
         .cal-date { font-weight: bold; margin-bottom: 1px; }
         .cal-cell:nth-child(7n+1) { background: #fff5f5; }
         .cal-cell:nth-child(7n+1) .cal-date { color: #e53e3e; }
@@ -51,8 +51,10 @@
         .cal-count-badge { font-size: 9px; color: #4a5568; background: #edf2f7; border-radius: 4px; padding: 2px 4px; text-align: center; margin-top: 4px; font-weight: bold; border: 1px solid #cbd5e0; }
         .cal-count-badge.has-vacation { background: #fffaf0; color: #dd6b20; border-color: #fbd38d; }
         
-        .cal-my-status { font-size: 8px; padding: 1px 2px; border-radius: 2px; text-align: center; color: white; margin-top: auto; font-weight: bold; }
-        .status-approved { background: #48bb78; }
+        /* 固定休み（緑）と希望休み（青）の色分けバッジ */
+        .cal-my-status { font-size: 8px; padding: 2px 2px; border-radius: 4px; text-align: center; color: white; margin-top: auto; font-weight: bold; }
+        .status-fixed { background: #48bb78; }      /* 固定休み（緑） */
+        .status-approved { background: #3182ce; }   /* 希望休み（青） */
         .sun-close-text { color: #e53e3e; font-size: 9px; margin-top: 5px; text-align: center; font-weight: bold; }
 
         .action-panel { background: #edf2f7; border-top: 2px solid #cbd5e0; padding: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 -3px 10px rgba(0,0,0,0.05); }
@@ -111,7 +113,7 @@
             
             <div class="form-group" id="normal-login-group">
                 <label>スタッフ名</label>
-                <select id="login-user-select"></select>
+                <select id="login-user-select" onchange="handleUserSelectChange()"></select>
             </div>
             
             <div class="form-group" id="remembered-group" style="display:none; text-align:center; padding:12px; background:#f0fff4; border-radius:8px; border:1px solid #c6f6d5;">
@@ -122,10 +124,10 @@
             
             <div class="form-group">
                 <label>パスワード</label>
-                <input type="password" id="login-pass" placeholder="••••••••">
+                <input type="password" id="login-pass" placeholder="••••••••" disabled>
                 <span style="font-size:12px; color:#e53e3e; font-weight:bold; margin-top:4px; text-align:center;">※初期パスワード：shift1234</span>
             </div>
-            <button class="btn" onclick="login()">ログイン</button>
+            <button class="btn" id="login-submit-btn" onclick="login()" disabled>ログイン</button>
             <div class="forget-link" style="color: #e53e3e; margin-top:20px;" onclick="forceResetSystem()">⚠️ 画面が動かない場合はここをタップ</div>
         </div>
     </div>
@@ -221,7 +223,7 @@
         </div>
     </div>
 
-    <!-- モーダル -->
+    <!-- モーダルダイアログ -->
     <div class="modal" id="rule-modal">
         <div class="modal-content">
             <button class="close-btn" onclick="closeModal('rule-modal')">×</button>
@@ -295,17 +297,17 @@
     let currentYear = 2026;
     let currentMonth = 6; 
     let rangeStartStr = "";
-    let rangeEndStr = "";
+    let rangeEndStr = ""; // 今回から常に空（レンジ選択廃止のため）
     
-    // 強制的にローディングを解除する安全装置（iPhone対応）
+    // 強制的にローディングを解除する安全装置
     let isDataLoaded = false;
     let isSubscribed = false;
     setTimeout(() => {
         if(!isDataLoaded) {
             hideLoading();
-            if(!isSubscribed) subscribeToCloudData(); // フォールバックで強制的に接続開始
+            if(!isSubscribed) subscribeToCloudData();
         }
-    }, 4000); // 4秒経ったら強制解除
+    }, 4000);
 
     async function initAuth() {
         try {
@@ -373,11 +375,28 @@
         }
     }
 
+    // 改善点1: ログイン名の選択が「稲澤」にならないように「選択してください」を初期表示にする
+    window.handleUserSelectChange = function() {
+        const select = document.getElementById('login-user-select');
+        const passInput = document.getElementById('login-pass');
+        const submitBtn = document.getElementById('login-submit-btn');
+        
+        if (select.value === "") {
+            passInput.disabled = true;
+            submitBtn.disabled = true;
+            passInput.value = "";
+        } else {
+            passInput.disabled = false;
+            submitBtn.disabled = false;
+        }
+    }
+
     window.login = function() {
         let selected = document.getElementById('remembered-group').style.display === 'block' ? localStorage.getItem('rememberedUser') : document.getElementById('login-user-select').value;
         const pass = document.getElementById('login-pass').value;
-        if(!selected) { alert('スタッフ名が選択されていません。'); return; }
+        if(!selected || selected === "") { alert('スタッフ名を選択してください。'); return; }
 
+        // 改善点2: ローカルデータと最新のFirestoreデータを照合して二重ログインを完全に防ぐ
         if (users[selected] && users[selected].password === pass) {
             currentUser = selected;
             localStorage.setItem('rememberedUser', currentUser);
@@ -411,14 +430,22 @@
         const newPwConfirm = document.getElementById('new-pw-confirm').value;
 
         if (users[currentUser].password !== currentPw) { alert("現在のパスワードが正しくありません。"); return; }
-        if (!newPw || newPw === "shift1234") { alert("有効な新しいパスワードを入力してください。"); return; }
+        if (!newPw || newPw === "shift1234") { alert("「shift1234」以外の有効な新しいパスワードを入力してください。"); return; }
         if (newPw !== newPwConfirm) { alert("新しいパスワード（確認）が一致しません。"); return; }
 
+        // 改善点2: クラウド更新と同時にローカルデータを即時書き換えて、"shift1234"での再ログインを即時ブロック
         updateDoc(doc(db, pathUsers, currentUser), { password: newPw }).then(() => {
-            alert("パスワードを変更しました！");
+            users[currentUser].password = newPw; // 即時上書き
+            alert("パスワードを変更しました！これ以降は新しいパスワードでのみログイン可能です。");
             document.getElementById('cal-tab').disabled = false;
             document.getElementById('rule-btn').style.display = 'block';
             document.getElementById('admin-tab').style.display = users[currentUser].isAdmin ? 'block' : 'none';
+            
+            // パスワード変更枠の初期化
+            document.getElementById('current-pw').value = "";
+            document.getElementById('new-pw').value = "";
+            document.getElementById('new-pw-confirm').value = "";
+            
             switchTab('calendar-screen');
         });
     }
@@ -445,11 +472,15 @@
             document.getElementById('remembered-group').style.display = 'block';
             document.getElementById('remembered-user-name').innerText = rUser;
             document.getElementById('login-title').innerText = "スタッフ認証";
+            document.getElementById('login-pass').disabled = false;
+            document.getElementById('login-submit-btn').disabled = false;
             document.getElementById('login-pass').focus();
         } else {
             document.getElementById('normal-login-group').style.display = 'block';
             document.getElementById('remembered-group').style.display = 'none';
             document.getElementById('login-title').innerText = "シフト管理ログイン";
+            buildUserLists(); // 再描画時に「選択してください」を入れる
+            handleUserSelectChange();
         }
     }
 
@@ -458,7 +489,12 @@
         const adminTarget = document.getElementById('admin-target-user');
         const adminFixedUser = document.getElementById('admin-fixed-user');
         
-        if (select) { select.innerHTML = ''; staffList.forEach(name => { select.add(new Option(name, name)); }); }
+        if (select) { 
+            select.innerHTML = '';
+            // 改善点1: 先頭に「選択してください」を挿入して勝手にログイン名が選ばれるのを防止
+            select.add(new Option("※ スタッフを選択してください", ""));
+            staffList.forEach(name => { select.add(new Option(name, name)); }); 
+        }
         if (adminTarget) { adminTarget.innerHTML = ''; staffList.forEach(name => { adminTarget.add(new Option(name, name)); }); }
         if (adminFixedUser) { adminFixedUser.innerHTML = ''; staffList.forEach(name => { adminFixedUser.add(new Option(name, name)); }); }
         
@@ -497,13 +533,11 @@
 
     function resetRangeSelection() { rangeStartStr = ""; rangeEndStr = ""; }
 
+    // 改善点6: タップ時の複数日（レンジ）選択を完全に廃止。常に「1タップ1日のみ選択」にする
     window.handleCellClick = function(dateStr, dayOfWeek) {
-        if (dayOfWeek === 0) { resetRangeSelection(); renderCalendar(); return; }
-        if (!rangeStartStr || (rangeStartStr && rangeEndStr)) {
-            rangeStartStr = dateStr; rangeEndStr = "";
-        } else if (rangeStartStr && !rangeEndStr) {
-            if (dateStr < rangeStartStr) { rangeStartStr = dateStr; } else { rangeEndStr = dateStr; }
-        }
+        if (dayOfWeek === 0) { resetRangeSelection(); renderCalendar(); return; } // 日曜日は定休日のためスキップ
+        rangeStartStr = dateStr; 
+        rangeEndStr = ""; // 範囲選択を常にクリア
         renderCalendar();
     }
 
@@ -540,14 +574,55 @@
     window.openModal = function(id) { document.getElementById(id).style.display = 'flex'; }
     window.closeModal = function(id) { document.getElementById(id).style.display = 'none'; }
 
-    function getDatesInRange(startStr, endStr) {
-        const dates = []; let curr = new Date(startStr); const end = new Date(endStr);
-        while (curr <= end) {
-            let dStr = curr.toISOString().split('T')[0];
-            if (curr.getDay() !== 0) { dates.push({ dateStr: dStr, dow: curr.getDay(), dateObj: new Date(curr) }); }
-            curr.setDate(curr.getDate() + 1);
-        }
-        return dates;
+    // 改善点6に対応：1日ずつ申請しても「3連休以上」の違反を裏側で完璧に自動検知するプログラム
+    function checkThreeConsecutiveHolidays(targetDateStr, userName) {
+        const targetDate = new Date(targetDateStr);
+        
+        // 指定した前後日数（1日前、2日前、1日後、2日後）の日付文字列を取得する
+        const getOffsetDateStr = (offset) => {
+            const d = new Date(targetDate);
+            d.setDate(d.getDate() + offset);
+            return d.toISOString().split('T')[0];
+        };
+        
+        const prev1 = getOffsetDateStr(-1);
+        const prev2 = getOffsetDateStr(-2);
+        const next1 = getOffsetDateStr(1);
+        const next2 = getOffsetDateStr(2);
+        
+        // 指定日が「そのスタッフの休み」かどうか判定
+        const isUserHoliday = (dateStr) => {
+            const dateObj = new Date(dateStr);
+            const dow = dateObj.getDay();
+            // 日曜日はお店自体の定休日のため連休カウントに含める
+            if (dow === 0) return true; 
+            
+            // 希望公休に入っているか
+            const hasWish = vacations.some(v => v.date === dateStr && v.user === userName);
+            if (hasWish) return true;
+            
+            // 固定休みに入っているか
+            const nthWeek = getNthWeekOfMonth(dateObj);
+            const hasFixed = fixedSchedules.some(sched => {
+                if (parseInt(sched.dow) === dow) {
+                    if (sched.week === "all" || parseInt(sched.week) === nthWeek) {
+                        const isExcepted = fixedExceptions.some(ex => ex.date === dateStr && ex.user === sched.user);
+                        return !isExcepted && (sched.user === userName || sched.user.startsWith(userName));
+                    }
+                }
+                return false;
+            });
+            return hasFixed;
+        };
+
+        // パターンA: 前日と前々日が休み（[前々日, 前日, 申請日] の3連休）
+        if (isUserHoliday(prev1) && isUserHoliday(prev2)) return true;
+        // パターンB: 前日と翌日が休み（[前日, 申請日, 翌日] の3連休）
+        if (isUserHoliday(prev1) && isUserHoliday(next1)) return true;
+        // パターンC: 翌日と翌々日が休み（[申請日, 翌日, 翌々日] の3連休）
+        if (isUserHoliday(next1) && isUserHoliday(next2)) return true;
+
+        return false;
     }
 
     window.submitVacationRange = function() {
@@ -555,64 +630,59 @@
         if (!reasonInput || reasonInput.trim() === "") { alert("公休の理由を入力してください。"); return; }
         const reason = reasonInput.trim();
 
-        const endTarget = rangeEndStr ? rangeEndStr : rangeStartStr;
-        const targetDates = getDatesInRange(rangeStartStr, endTarget);
-        if(targetDates.length === 0) { alert("有効な日付がありません。"); return; }
+        // 常にタップした1日だけを処理対象にする
+        const dateStr = rangeStartStr;
+        const targetDate = new Date(dateStr);
+        const dayOfWeek = targetDate.getDay();
 
-        if (targetDates.length >= 3) {
-            alert("【申請エラー】\n3日以上の連休はシステムから申請できません。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。");
+        // 改善点6：1日ずつの申請でも、自動的に前後をスキャンして3連休以上をブロック
+        if (checkThreeConsecutiveHolidays(dateStr, currentUser)) {
+            alert("【申請エラー】\n日曜日の定休日を含めて、3日以上の連休になるため申請できません。\n\n※特別な事情で連休を取得する場合は、稲澤さんへ直接相談してください。");
             closeModal('reason-modal'); return;
         }
 
-        for (let d of targetDates) {
-            const existingAll = getDayVacationsAll(d.dateStr, d.dow, d.dateObj);
-            const currentWishCount = existingAll.filter(v => !v.isFixed).length;
-            
-            if (currentWishCount >= 2) {
-                const dateLabel = d.dateStr.replace(/(\d{4})-(\d{2})-(\d{2})/, "$2/$3");
-                alert(`【申請エラー】\n${dateLabel} は既に他のスタッフの希望公休が上限（2人）に達しています。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。`);
-                closeModal('reason-modal'); return;
-            }
+        const existingAll = getDayVacationsAll(dateStr, dayOfWeek, targetDate);
+        const currentWishCount = existingAll.filter(v => !v.isFixed).length;
+        
+        if (currentWishCount >= 2) {
+            alert(`【申請エラー】\n申請した日は既に他のスタッフの希望公休が上限（2人）に達しています。\n\n※どうしてもこの日にお休みが必要な場合は、稲澤さんへ直接相談してください。`);
+            closeModal('reason-modal'); return;
         }
 
-        const checkDate = new Date(rangeStartStr);
-        const year = checkDate.getFullYear(); const month = checkDate.getMonth() + 1;
+        const year = targetDate.getFullYear(); 
+        const month = targetDate.getMonth() + 1;
         const monthPrefix = `${year}-${String(month).padStart(2,'0')}`;
 
         let currentMonthVacations = vacations.filter(v => v.user === currentUser && v.date.startsWith(monthPrefix));
 
-        if (currentMonthVacations.length + targetDates.length > 2) {
-            alert(`【申請エラー】\n希望公休は月に2回までです。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。`);
+        if (currentMonthVacations.length >= 2) {
+            alert(`【申請エラー】\n希望公休は月に2回までです。\n\n※ルール以外のお休みを申請する場合は、稲澤さんへ直接相談してください。`);
             closeModal('reason-modal'); return;
         }
 
-        const hasSatInRequest = targetDates.some(d => d.dow === 6);
-        if (hasSatInRequest) {
+        if (dayOfWeek === 6) {
             const currentSatCount = currentMonthVacations.filter(v => new Date(v.date).getDay() === 6).length;
             if (currentSatCount >= 1) {
-                alert("【申請エラー】\n土曜日の希望公休は月に1回までです。\n\n※ルール以外の休みを申請した場合は管理者に相談してください。");
+                alert("【申請エラー】\n土曜日の希望公休は月に1回までです。既に今月の土曜日お休み枠を使用しています。");
                 closeModal('reason-modal'); return;
             }
         }
 
-        let addedCount = 0;
-        targetDates.forEach(d => {
-            if(!vacations.some(v => v.user === currentUser && v.date === d.dateStr)) {
-                addDoc(collection(db, pathVacations), {
-                    user: currentUser,
-                    date: d.dateStr,
-                    reason: reason,
-                    status: "approved"
-                }).then(() => {
-                    addedCount++;
-                    if (addedCount === targetDates.length) {
-                        closeModal('reason-modal');
-                        resetRangeSelection();
-                        alert("公休を登録しました。");
-                    }
-                });
-            }
-        });
+        if(!vacations.some(v => v.user === currentUser && v.date === dateStr)) {
+            addDoc(collection(db, pathVacations), {
+                user: currentUser,
+                date: dateStr,
+                reason: reason,
+                status: "approved"
+            }).then(() => {
+                closeModal('reason-modal');
+                resetRangeSelection();
+                alert("希望公休を登録しました！");
+            });
+        } else {
+            alert("既に登録済みの日付です。");
+            closeModal('reason-modal');
+        }
     }
 
     window.addFixedSchedule = function() {
@@ -712,7 +782,11 @@
             const dayOfWeek = targetDate.getDay();
 
             const dayVacations = getDayVacationsAll(dateStr, dayOfWeek, targetDate);
-            const myVacation = dayVacations.find(v => v.user === currentUser || (v.isFixed && v.user.startsWith(currentUser)));
+            
+            // 改善点4: ログインしていない、またはログイン処理の切り替え途中での土曜日確定バグを解決するため、
+            // currentUserが空でない場合のみ、自分の確定休みとして描画する
+            const myVacation = (currentUser && currentUser !== "") ? 
+                dayVacations.find(v => v.user === currentUser || (v.isFixed && v.user.startsWith(currentUser))) : null;
 
             let cellContent = `<div class="cal-date">${day}</div>`;
             if (dayOfWeek === 0) {
@@ -727,13 +801,15 @@
                     cellContent += `<div class="cal-count-badge">公休: 0名</div>`; 
                 }
                 
-                if (myVacation) { cellContent += `<div class="cal-my-status status-approved">確定</div>`; }
+                // 改善点5: 固定休（緑）と希望休（青）の色分けバッジ
+                if (myVacation) { 
+                    const statusClass = myVacation.isFixed ? 'status-fixed' : 'status-approved';
+                    cellContent += `<div class="cal-my-status ${statusClass}">確定</div>`; 
+                }
             }
 
             let rangeClass = "";
             if (rangeStartStr && dateStr === rangeStartStr) rangeClass = "selected-start";
-            else if (rangeEndStr && dateStr === rangeEndStr) rangeClass = "selected-end";
-            else if (rangeStartStr && rangeEndStr && dateStr > rangeStartStr && dateStr < rangeEndStr) rangeClass = "selected-range";
 
             grid.innerHTML += `<div class="cal-cell ${rangeClass}" onclick="handleCellClick('${dateStr}', ${dayOfWeek})">${cellContent}</div>`;
         }
@@ -760,59 +836,50 @@
 
         const isEditablePeriod = (diffMonths >= 2 && diffMonths <= 6);
         const dayVacations = getDayVacationsAll(rangeStartStr, dayOfWeek, targetDate);
-        const myVacation = dayVacations.find(v => v.user === currentUser || (v.isFixed && v.user.startsWith(currentUser)));
+        const myVacation = (currentUser && currentUser !== "") ? 
+            dayVacations.find(v => v.user === currentUser || (v.isFixed && v.user.startsWith(currentUser))) : null;
         const isAdminUser = currentUser && users[currentUser] && users[currentUser].isAdmin;
 
-        if (!rangeEndStr) {
-            labelEl.innerText = `${dispStart} の公休詳細`;
+        labelEl.innerText = `${dispStart} の公休詳細`;
 
-            let txt = "";
-            if (dayVacations.length > 0) {
-                txt = '<div style="display:flex; flex-direction:column; gap:4px;">';
-                dayVacations.forEach(v => {
-                    txt += `<div class="panel-list-item">`;
-                    txt += `<span>• <b>[${v.user}]</b> ─ ${v.reason}</span>`;
-                    
-                    if (isAdminUser) {
-                        if (v.isFixed) {
-                            txt += `<button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0;" onclick="removeFixedFromCalendar('${v.id}', '${v.user}', '${v.reason}', '${rangeStartStr}')">解除</button>`;
-                        } else {
-                            txt += `<button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0; background:#dd6b20;" onclick="removeVacationFromCalendar('${v.id}', '${v.user}', '${rangeStartStr}')">削除</button>`;
-                        }
+        let txt = "";
+        if (dayVacations.length > 0) {
+            txt = '<div style="display:flex; flex-direction:column; gap:4px;">';
+            dayVacations.forEach(v => {
+                txt += `<div class="panel-list-item">`;
+                
+                // 改善点3: 休みの理由のプライバシー制限
+                // 管理者（稲澤さん）または「申請した本人」だけに詳細な理由を表示し、他の一般スタッフには「公休」とだけ表示する
+                const displayReason = (isAdminUser || v.user === currentUser) ? v.reason : "公休";
+                txt += `<span>• <b>[${v.user}]</b> ─ ${displayReason}</span>`;
+                
+                if (isAdminUser) {
+                    if (v.isFixed) {
+                        txt += `<button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0;" onclick="removeFixedFromCalendar('${v.id}', '${v.user}', '${v.reason}', '${rangeStartStr}')">解除</button>`;
+                    } else {
+                        txt += `<button class="btn btn-danger" style="padding:2px 6px; font-size:11px; width:auto; margin:0; background:#dd6b20;" onclick="removeVacationFromCalendar('${v.id}', '${v.user}', '${rangeStartStr}')">削除</button>`;
                     }
-                    txt += `</div>`;
-                });
-                txt += '</div>';
-            } else { txt = "この日の公休スタッフはいません。"; }
-            listEl.innerHTML = txt;
-
-            if (isAdminUser) {
-                btnArea.innerHTML = `<p style="font-size:12px; color:#48bb78; text-align:center; font-weight:bold;">💡 管理者権限：選択した箇所だけピンポイントで消去・解除できます</p>`;
-            } else if (myVacation) {
-                if (myVacation.isFixed) {
-                    btnArea.innerHTML = `<button class="btn btn-danger" style="width:100%; background:#cbd5e0;" disabled>固定公休の変更は管理者に依頼してください</button>`;
-                } else if (isEditablePeriod) {
-                    btnArea.innerHTML = `<button class="btn btn-danger" style="width:100%;" onclick="cancelVacation('${rangeStartStr}')">この日の希望公休を消去する</button>`;
-                } else {
-                    btnArea.innerHTML = `<button class="btn btn-danger" style="width:100%; background:#cbd5e0;" disabled>締め切り月のため変更できません</button>`;
                 }
-            } else if (isEditablePeriod) {
-                btnArea.innerHTML = `<button class="btn" style="width:100%;" onclick="openApplyModal()">この日の公休を登録（1日のみ）</button>`;
-            } else {
-                btnArea.innerHTML = `<button class="btn" style="width:100%; background:#cbd5e0;" disabled>7月は締め切りのため閲覧のみです</button>`;
-            }
-        } else {
-            const dispEnd = rangeEndStr.replace(/(\d{4})-(\d{2})-(\d{2})/, "$2/$3");
-            labelEl.innerText = `${dispStart} 〜 ${dispEnd}（連休申請）`;
-            listEl.innerHTML = "指定した範囲で連続して公休を登録します。";
+                txt += `</div>`;
+            });
+            txt += '</div>';
+        } else { txt = "この日の公休スタッフはいません。"; }
+        listEl.innerHTML = txt;
 
-            if (isAdminUser) {
-                btnArea.innerHTML = `<p style="font-size:12px; color:#e53e3e; text-align:center;">※管理者は下部の強制登録/削除をご利用ください。</p>`;
+        if (isAdminUser) {
+            btnArea.innerHTML = `<p style="font-size:12px; color:#48bb78; text-align:center; font-weight:bold;">💡 管理者権限：選択した箇所だけピンポイントで消去・解除できます</p>`;
+        } else if (myVacation) {
+            if (myVacation.isFixed) {
+                btnArea.innerHTML = `<button class="btn btn-danger" style="width:100%; background:#cbd5e0;" disabled>固定公休の変更は管理者に依頼してください</button>`;
             } else if (isEditablePeriod) {
-                btnArea.innerHTML = `<button class="btn" style="width:100%;" onclick="openApplyModal()">この範囲で連休を登録する</button>`;
+                btnArea.innerHTML = `<button class="btn btn-danger" style="width:100%;" onclick="cancelVacation('${rangeStartStr}')">この日の希望公休を消去する</button>`;
             } else {
-                btnArea.innerHTML = `<button class="btn" style="width:100%; background:#cbd5e0;" disabled>この期間は新規登録できません</button>`;
+                btnArea.innerHTML = `<button class="btn btn-danger" style="width:100%; background:#cbd5e0;" disabled>締め切り月のため変更できません</button>`;
             }
+        } else if (isEditablePeriod) {
+            btnArea.innerHTML = `<button class="btn" style="width:100%;" onclick="openApplyModal()">この日の公休を申請・登録する</button>`;
+        } else {
+            btnArea.innerHTML = `<button class="btn" style="width:100%; background:#cbd5e0;" disabled>7月は締め切りのため閲覧のみです</button>`;
         }
     }
 
